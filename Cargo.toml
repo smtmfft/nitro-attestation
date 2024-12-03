@@ -1,0 +1,16 @@
+[package]
+name = "nitro-attest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aws-nitro-enclaves-nsm-api = "0.4.0"
+aws-nitro-enclaves-cose = "0.5.2"
+aws-sdk-kms = "1.50.0"
+aws-config = "1.5.10"
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11.15"
+bincode = "1.3"
+tokio = { version = "1", features = ["full"] } 
