@@ -1,0 +1,23 @@
+[package]
+name = "nitro-attest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aws-nitro-enclaves-nsm-api.workspace = true
+aws-nitro-enclaves-cose.workspace = true
+aws-sdk-kms.workspace = true
+aws-config.workspace = true
+anyhow.workspace = true
+nix.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+serde_bytes.workspace = true
+bincode.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-core.workspace = true
+log.workspace = true
