@@ -1,33 +1,51 @@
+use anyhow::Error;
+use common::command::Command;
+use new_host::HostConnection;
 use nix::sys::socket::{
     accept, bind, listen, recv, socket, AddressFamily, Backlog, MsgFlags, SockFlag, SockType,
     VsockAddr,
 };
-use std::io::Error;
+use std::any;
 use std::os::fd::AsRawFd;
 use std::os::unix::io::RawFd;
 
 const VMADDR_CID_ANY: u32 = 0xFFFFFFFF;
-const VMADDR_PORT: u32 = 1234;
+const VMADDR_PORT: u32 = 5001;
+const LOG_PORT: u32 = 5002;
 const BUFFER_SIZE: usize = 1024;
 
 mod new_host;
 
 fn main() -> Result<(), Error> {
-    let mut host = HostConnection::connect(enclave_cid, CMD_PORT, LOG_PORT)?;
+    let mut host = HostConnection::listen(VMADDR_CID_ANY, VMADDR_PORT, LOG_PORT).map_err(|e| {
+        eprintln!("Error connecting to host: {}", e);
+        Error::msg(e.to_string())
+    })?;
 
     // 使用自定义的日志处理函数
-    let log_handle = host.start_log_receiver(|log| {
-        // 可以将日志写入文件
-        println!("[{}] {}: {}", log.timestamp, log.level, log.message);
-        // 或者发送到日志服务
-        // send_to_log_service(&log);
-    })?;
+    let log_handle = host
+        .start_log_receiver(|log| {
+            // TODO: use local tracing tool
+            println!("[{}] {}: {}", log.timestamp, log.level, log.message);
+            // or send to log service
+            // send_to_log_service(&log);
+        })
+        .map_err(|e| {
+            eprintln!("Error connecting to host: {}", e);
+            Error::msg(e.to_string())
+        })?;
 
     // 发送命令并继续其他操作
-    let response = host.send_command(Command::ExecuteTask {
-        task_id: "task1".to_string(),
-        params: vec!["param1".to_string()],
-    })?;
+    let response = host
+        .send_command(Command::ExecuteTask {
+            task_id: "task1".to_string(),
+            task_type: "task_type".to_string(),
+            inputs: Default::default(),
+        })
+        .map_err(|e| {
+            eprintln!("Error connecting to host: {}", e);
+            Error::msg(e.to_string())
+        })?;
 
     // 如果需要，可以等待日志接收线程结束
     log_handle.join().unwrap();

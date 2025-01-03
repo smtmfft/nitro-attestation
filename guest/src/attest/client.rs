@@ -1,56 +1,65 @@
 use anyhow::Error;
-use nix::sys::socket::VsockAddr;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::{process::Command, sync::Mutex};
-use vsock::{VsockListener, VsockStream};
+use common::command::{Command, LogMessage, Response, TaskStatus};
+use log::debug;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, io::Read};
+use vsock::{VsockAddr, VsockListener, VsockStream};
 
+#[cfg(feature = "aws-nitro")]
 const VMADDR_CID_HOST: u32 = 3;
-const VSOCK_PORT: u32 = 5000;
-const LOG_VSOCK_PORT: u32 = 5001;
+#[cfg(not(feature = "aws-nitro"))]
+const VMADDR_CID_HOST: u32 = 2;
 
 pub struct Client {
+    cmd_stream: VsockStream,
+    log_stream: VsockStream,
     tasks: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Client {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(cmd_port: u32, log_port: u32) -> Result<Self, Error> {
+        Ok(Self {
             tasks: Arc::new(Mutex::new(HashMap::new())),
-        }
+            cmd_stream: VsockStream::connect(&VsockAddr::new(VMADDR_CID_HOST, cmd_port))?, // 3 是 AWS Nitro Enclave 中的 parent instance
+            log_stream: VsockStream::connect(&VsockAddr::new(VMADDR_CID_HOST, log_port))?,
+        })
     }
 
-    pub fn run(&mut self, cmd_port: u32, log_port: u32) -> Result<(), Box<dyn Error>> {
-        // 启动命令处理线程
+    pub fn run(&self) -> Result<(), Error> {
+        // 命令处理循环
         let tasks = Arc::clone(&self.tasks);
-        std::thread::spawn(move || -> Result<(), Box<dyn Error>> {
-            let listener = VsockListener::bind(cmd_port)?;
+        let mut cmd_stream = self.cmd_stream.try_clone().map_err(|e| {
+            eprintln!("Error cloning command stream: {}", e);
+            Error::msg(e.to_string())
+        })?;
 
+        std::thread::spawn(move || {
+            let mut buf = vec![0; 1024];
             loop {
-                if let Ok((mut stream, _addr)) = listener.accept() {
-                    let mut buf = vec![0; 1024];
-                    if let Ok(n) = stream.read(&mut buf) {
+                match cmd_stream.read(&mut buf) {
+                    Ok(0) => break, // 连接关闭
+                    Ok(n) => {
                         if let Ok(command) = serde_json::from_slice::<Command>(&buf[..n]) {
                             let response = handle_command(&command, &tasks);
                             if let Ok(resp_bytes) = serde_json::to_vec(&response) {
-                                let _ = stream.write_all(&resp_bytes);
+                                let _ = cmd_stream.write_all(&resp_bytes);
                             }
                         }
+                    }
+                    Err(e) => {
+                        eprintln!("Error reading command: {}", e);
+                        break;
                     }
                 }
             }
         });
 
         // 启动日志处理线程
-        let listener = VsockListener::bind(log_port)?;
-        if let Ok((stream, _addr)) = listener.accept() {
-            self.start_logger(stream);
-        }
-
-        Ok(())
-    }
-
-    fn start_logger(&self, mut stream: VsockStream) {
+        let mut log_stream = self.log_stream.try_clone().map_err(|e| {
+            eprintln!("Error cloning log stream: {}", e);
+            Error::msg(e.to_string())
+        })?;
         std::thread::spawn(move || loop {
             let log = LogMessage {
                 timestamp: std::time::SystemTime::now()
@@ -60,49 +69,68 @@ impl Client {
                 level: "INFO".to_string(),
                 message: "Test log message".to_string(),
             };
+            println!("Sending log message: {:?}", log);
 
             if let Ok(log_bytes) = serde_json::to_vec(&log) {
-                if stream.write_all(&log_bytes).is_err() {
+                if log_stream.write_all(&log_bytes).is_err() {
                     break;
                 }
             }
 
             std::thread::sleep(std::time::Duration::from_secs(1));
         });
+
+        Ok(())
     }
 }
 
 fn handle_command(command: &Command, tasks: &Arc<Mutex<HashMap<String, String>>>) -> Response {
     match command {
-        Command::ExecuteTask { task_id, params } => {
-            let mut tasks = tasks.lock().unwrap();
-            tasks.insert(task_id.clone(), "running".to_string());
+        Command::ExecuteTask {
+            task_id,
+            task_type: _,
+            inputs: _,
+        } => {
+            // 获取锁并修改状态
+            let mut tasks_guard = tasks.lock().unwrap();
+            tasks_guard.insert(task_id.clone(), "running".to_string());
 
-            // 在新线程中处理任务
+            // 启动任务处理线程
             let tasks = Arc::clone(&tasks);
-            let task_id = task_id.clone();
+            let task_id_clone = task_id.clone();
             std::thread::spawn(move || {
-                // 模拟任务处理
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 let mut tasks = tasks.lock().unwrap();
-                tasks.insert(task_id, "completed".to_string());
+                tasks.insert(task_id_clone.to_owned(), "completed".to_string());
             });
 
             Response::TaskStarted {
                 task_id: task_id.clone(),
+                estimated_duration: Some(5),
             }
         }
-        Command::GetStatus { task_id } => {
+        Command::QueryTask { task_id } => {
             let tasks = tasks.lock().unwrap();
             let status = tasks
                 .get(task_id)
                 .cloned()
                 .unwrap_or_else(|| "unknown".to_string());
 
-            Response::Status {
+            Response::TaskStatus {
                 task_id: task_id.clone(),
-                status,
+                status: match status.as_str() {
+                    "running" => TaskStatus::Running,
+                    "completed" => TaskStatus::Completed,
+                    _ => TaskStatus::Failed,
+                },
+                progress: None,
+                error: None,
+                result: None,
             }
         }
+        _ => Response::Error {
+            code: 400,
+            message: "Unsupported command".to_string(),
+        },
     }
 }

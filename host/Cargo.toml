@@ -11,4 +11,5 @@ serde.workspace = true
 serde_json.workspace = true
 futures.workspace = true
 aws-nitro-enclaves-nsm-api.workspace = true
-aws-nitro-enclaves-vsock.workspace = true
+vsock.workspace = true
+common = { path = "../common" }

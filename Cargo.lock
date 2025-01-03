@@ -529,6 +529,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "common"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -852,11 +859,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-nitro-enclaves-nsm-api",
+ "common",
  "futures",
  "nix 0.29.0",
  "serde",
  "serde_json",
  "tokio",
+ "vsock",
 ]
 
 [[package]]
@@ -1262,6 +1271,7 @@ dependencies = [
  "aws-sdk-kms",
  "bincode",
  "chrono",
+ "common",
  "log",
  "nix 0.29.0",
  "serde",
@@ -1271,6 +1281,7 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-subscriber",
+ "vsock",
 ]
 
 [[package]]
@@ -2069,6 +2080,16 @@ name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
+
+[[package]]
+name = "vsock"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e8b4d00e672f147fc86a09738fadb1445bd1c0a40542378dfb82909deeee688"
+dependencies = [
+ "libc",
+ "nix 0.29.0",
+]
 
 [[package]]
 name = "want"
