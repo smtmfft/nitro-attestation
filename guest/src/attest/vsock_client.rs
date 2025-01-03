@@ -1,4 +1,5 @@
-use std::os::fd::AsRawFd;
+use nix::libc;
+use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
 // client.rs
 use nix::sys::socket::{connect, send, socket, AddressFamily, SockFlag, SockType};
 use nix::sys::socket::{MsgFlags, VsockAddr};
@@ -25,22 +26,82 @@ impl VsockClient {
         thread::spawn(move || {
             let mut retry_count = 0;
             loop {
+                println!("Attempting to setup VSOCK connection..."); // 调试信息
                 match setup_vsock_connection() {
                     Ok(sock_fd) => {
+                        println!("VSOCK connection established with fd: {}", sock_fd); // 调试信息
+                        println!(
+                            "Socket fd {} status before Test send: {:?}",
+                            sock_fd,
+                            unsafe { libc::fcntl(sock_fd, libc::F_GETFD) }
+                        );
+                        // 立即发送一个测试数据
+                        let test_data = b"test";
+                        match send(sock_fd, test_data, MsgFlags::empty()) {
+                            Ok(n) => println!("Test send successful, sent {} bytes", n),
+                            Err(e) => println!("Test send failed: {}", e),
+                        }
+
                         retry_count = 0;
                         while let Ok(data) = receiver.recv() {
-                            if let Err(e) = send(sock_fd, &data, MsgFlags::empty()) {
-                                eprintln!("Failed to send data: {}", e);
-                                break;
+                            println!("Received data to send, length: {}", data.len()); // 调试信息
+                            println!("Socket fd {} status before send: {:?}", sock_fd, unsafe {
+                                libc::fcntl(sock_fd, libc::F_GETFD)
+                            });
+                            match send(sock_fd, &data, MsgFlags::empty()) {
+                                Ok(n) => println!("Successfully sent {} bytes", n), // 调试信息
+                                Err(e) => {
+                                    eprintln!("Failed to send data {data:?}: {e}");
+                                    println!(
+                                        "Socket fd {} status before break: {:?}",
+                                        sock_fd,
+                                        unsafe { libc::fcntl(sock_fd, libc::F_GETFD) }
+                                    ); // 检查 fd 状态
+                                    break;
+                                }
                             }
                         }
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        eprintln!("Failed to setup connection: {}", e); // 调试信息
                         retry_count += 1;
-                        thread::sleep(Duration::from_secs(retry_count.min(60)));
+                        thread::sleep(Duration::from_secs(retry_count.min(3)));
                     }
                 }
             }
+
+            // let mut sock_fd = None;
+            // loop {
+            //     // 如果没有连接，尝试建立连接
+            //     if sock_fd.is_none() {
+            //         match setup_vsock_connection() {
+            //             Ok(fd) => {
+            //                 sock_fd = Some(fd);
+            //                 retry_count = 0;
+            //             }
+            //             Err(_) => {
+            //                 retry_count += 1;
+            //                 thread::sleep(Duration::from_secs(retry_count.min(3)));
+            //                 continue;
+            //             }
+            //         }
+            //     }
+
+            //     // 尝试接收和发送数据
+            //     match receiver.recv() {
+            //         Ok(data) => {
+            //             if let Some(fd) = sock_fd {
+            //                 if let Err(e) = send(fd, &data, MsgFlags::empty()) {
+            //                     eprintln!("Failed to send data {data:?}: {e}");
+            //                     // 关闭旧的连接
+            //                     let _ = nix::unistd::close(fd);
+            //                     sock_fd = None;
+            //                 }
+            //             }
+            //         }
+            //         Err(_) => break, // channel 已关闭
+            //     }
+            // }
         });
 
         VsockClient { sender }
@@ -66,13 +127,11 @@ impl VsockClient {
             .unwrap_or("unknown")
             .to_string();
 
-        // 先发送文件名
         let name_header = ProtocolHeader::new(MessageType::FileTransfer, filename.len() as u32);
         let mut name_data = name_header.to_vec();
         name_data.extend_from_slice(filename.as_bytes());
         let _ = self.sender.send(name_data);
 
-        // 读取并发送文件内容
         let mut buffer = [0; 8192];
         loop {
             match file.read(&mut buffer)? {
@@ -89,7 +148,86 @@ impl VsockClient {
     }
 }
 
-fn setup_vsock_connection() -> Result<i32, Box<dyn std::error::Error>> {
+// fn setup_vsock_connection() -> Result<RawFd, Box<dyn std::error::Error>> {
+//     let sock_fd = socket(
+//         AddressFamily::Vsock,
+//         SockType::Stream,
+//         SockFlag::empty(),
+//         None,
+//     )?;
+
+//     let addr = VsockAddr::new(HOST_CID, SERVICE_PORT);
+//     connect(sock_fd.as_raw_fd(), &addr)?;
+
+//     Ok(sock_fd.as_raw_fd())
+// }
+
+// fn setup_vsock_connection() -> Result<RawFd, Box<dyn std::error::Error>> {
+//     println!("Creating socket...");
+//     let sock_fd = socket(
+//         AddressFamily::Vsock,
+//         SockType::Stream,
+//         SockFlag::empty(),
+//         None,
+//     )?;
+//     println!("Socket created with fd: {:?}", sock_fd);
+//     println!(
+//         "Socket fd {:?} status after socket(): {:?}",
+//         sock_fd,
+//         unsafe { libc::fcntl(sock_fd.as_raw_fd(), libc::F_GETFD) }
+//     );
+
+//     let addr = VsockAddr::new(HOST_CID, SERVICE_PORT);
+//     println!(
+//         "Connecting to host CID {} on port {}",
+//         HOST_CID, SERVICE_PORT
+//     );
+
+//     match connect(sock_fd.as_raw_fd(), &addr) {
+//         Ok(_) => {
+//             println!("Connect successful");
+//             println!(
+//                 "Socket fd {:?} status after connect(): {:?}",
+//                 sock_fd,
+//                 unsafe { libc::fcntl(sock_fd.as_raw_fd(), libc::F_GETFD) }
+//             );
+//             Ok(sock_fd.as_raw_fd())
+//         }
+//         Err(e) => {
+//             println!("Connect failed: {}", e);
+//             Err(Box::new(e))
+//         }
+//     }
+// }
+
+// fn setup_vsock_connection() -> Result<i32, Box<dyn std::error::Error>> {
+//     println!("Creating socket...");
+//     let sock_fd = socket(
+//         AddressFamily::Vsock,
+//         SockType::Stream,
+//         SockFlag::empty(),
+//         None,
+//     )?;
+
+//     // 获取原始的文件描述符
+//     let raw_fd = sock_fd.as_raw_fd();
+//     println!("Socket created with fd: {}", raw_fd);
+
+//     let addr = VsockAddr::new(HOST_CID, SERVICE_PORT);
+//     println!(
+//         "Connecting to host CID {} on port {}",
+//         HOST_CID, SERVICE_PORT
+//     );
+
+//     connect(raw_fd, &addr)?;
+
+//     // 为了防止 OwnedFd 被 drop，我们需要转移所有权
+//     std::mem::forget(sock_fd);
+
+//     Ok(raw_fd)
+// }
+
+fn setup_vsock_connection() -> Result<RawFd, Box<dyn std::error::Error>> {
     let sock_fd = socket(
         AddressFamily::Vsock,
         SockType::Stream,
@@ -100,10 +238,9 @@ fn setup_vsock_connection() -> Result<i32, Box<dyn std::error::Error>> {
     let addr = VsockAddr::new(HOST_CID, SERVICE_PORT);
     connect(sock_fd.as_raw_fd(), &addr)?;
 
-    Ok(sock_fd.as_raw_fd())
+    Ok(sock_fd.into_raw_fd()) // 消费 OwnedFd，得到 raw fd
 }
 
-// 方便使用的宏
 #[macro_export]
 macro_rules! vsock_log {
     ($client:expr, $($arg:tt)*) => {

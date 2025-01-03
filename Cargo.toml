@@ -20,3 +20,5 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 tracing-core = "0.1.33"
 log = "0.4.22"
+futures = "0.3.17"
+aws-nitro-enclaves-vsock = { git = "https://github.com/aws/aws-nitro-enclaves-sdk-c", tag = "v0.4.0", package = "vsock-rs" }

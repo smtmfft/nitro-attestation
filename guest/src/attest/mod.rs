@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub mod vsock_client;
 pub mod vsock_log;
 pub mod vsock_protocol;
+pub mod client;
 
 #[derive(Serialize, Deserialize)]
 struct SealedData {

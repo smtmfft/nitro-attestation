@@ -10,7 +10,31 @@ const VMADDR_CID_ANY: u32 = 0xFFFFFFFF;
 const VMADDR_PORT: u32 = 1234;
 const BUFFER_SIZE: usize = 1024;
 
+mod new_host;
+
 fn main() -> Result<(), Error> {
+    let mut host = HostConnection::connect(enclave_cid, CMD_PORT, LOG_PORT)?;
+
+    // 使用自定义的日志处理函数
+    let log_handle = host.start_log_receiver(|log| {
+        // 可以将日志写入文件
+        println!("[{}] {}: {}", log.timestamp, log.level, log.message);
+        // 或者发送到日志服务
+        // send_to_log_service(&log);
+    })?;
+
+    // 发送命令并继续其他操作
+    let response = host.send_command(Command::ExecuteTask {
+        task_id: "task1".to_string(),
+        params: vec!["param1".to_string()],
+    })?;
+
+    // 如果需要，可以等待日志接收线程结束
+    log_handle.join().unwrap();
+    Ok(())
+}
+
+fn deprecated_main() -> Result<(), Error> {
     // 创建 VSOCK socket
     let sock_fd = socket(
         AddressFamily::Vsock, // VSOCK 地址族
